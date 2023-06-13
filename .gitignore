@@ -1,0 +1,17 @@
+*.cdf
+*.csv
+*.nc
+*.tmp*
+*.swp
+*.swo
+*.grb2
+*.grib2
+*.grb
+*.jpg
+*.png
+*.gif
+*.npz
+*.txt
+*.log
+*.zip
+__pycache__/
