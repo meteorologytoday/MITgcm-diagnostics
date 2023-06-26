@@ -1,10 +1,5 @@
 import numpy as np
-import data_loading_helper as dlh
-import MITgcmDiff.loadFunctions as lf
 import pandas as pd
-import MITgcmDiff.mixed_layer_tools as mlt
-import MITgcmDiff.calBudget as cb
-from MITgcmDiff.buoyancy_linear import TS2rho
 import xarray as xr
 
 import traceback
@@ -21,18 +16,11 @@ parser = argparse.ArgumentParser(
 )
 
 parser.add_argument('--data-dir', type=str, help='Input data dir.', required=True)
-parser.add_argument('--grid-dir', type=str, help='Input grid dir.', required=True)
-parser.add_argument('--mitgcm-beg-date', type=str, help='The datetime of iteration zero in mitgcm.', required=True)
-parser.add_argument('--mitgcm-deltaT', type=float, help='The timestep (sec) of mitgcm (deltaT).', required=True)
-parser.add_argument('--mitgcm-dumpfreq', type=float, help='The timestep (sec) of mitgcm dump frequency.', required=True)
 parser.add_argument('--beg-date', type=str, help='The datetime of begin.', required=True)
 parser.add_argument('--end-date', type=str, help='The datetime of end.', required=True)
-parser.add_argument('--skip-hrs', type=int, help='The skip in hours to do the next diag.', required=True)
+parser.add_argument('--data-freq-hrs', type=float, help='The averging time of each data in hours.', required=True)
 parser.add_argument('--avg-hrs', type=int, help='The length of time to do the average in hours.', default=np.nan)
-
-parser.add_argument('--lat-rng', type=float, nargs=2, help='The latitude range.', default=[31.0, 43.0])
-parser.add_argument('--lon-rng', type=float, nargs=2, help='The longitude range.', default=[230.0, 244.0])
-parser.add_argument('--nlev', type=int, help='The used vertical levels.', default=-1)
+parser.add_argument('--skip-hrs', type=int, help='The skip in hours to do the next diag.', required=True)
 parser.add_argument('--nproc', type=int, help='The number of parallel processes.', default=2)
 parser.add_argument('--output-dir', type=str, help='Output dir', default="")
 args = parser.parse_args()
@@ -179,7 +167,7 @@ def work(dt, output_filename):
 failed_dates = []
 with Pool(processes=args.nproc) as pool:
 
-    dts = pd.date_range(beg_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), freq=skip_hrs, inclusive="both")
+    dts = pd.date_range(beg_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), inclusive="both")
 
     input_args = []
     for i, dt in enumerate(dts):

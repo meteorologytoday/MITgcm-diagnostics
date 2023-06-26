@@ -7,14 +7,13 @@ import MITgcmDiff.xarrayCoversion as xac
 import numpy as np
 import pandas as pd
 
-
 class MITgcmSimMetadata:
 
     def __init__(self, start_datetime, deltaT, dumpfreq, data_dir, grid_dir):
 
         self.start_datetime = pd.Timestamp(start_datetime)
-        self.deltaT = deltaT
-        self.dumpfreq = dumpfreq
+        self.deltaT = pd.Timedelta(seconds=deltaT)
+        self.dumpfreq = pd.Timedelta(seconds=dumpfreq)
         self.data_dir = data_dir
         self.grid_dir = grid_dir
         
@@ -24,7 +23,7 @@ def getItersFromDate(dt, msm : MITgcmSimMetadata):
     if type(dt) == str:
         dt = pd.Timestamp(dt) 
  
-    delta_seconds = (dt - msm.start_datetime).total_seconds()
+    delta_seconds = dt - msm.start_datetime
     iters = delta_seconds / msm.deltaT
 
     if iters % 1 != 0:
@@ -36,17 +35,16 @@ def getItersFromDate(dt, msm : MITgcmSimMetadata):
 
 def getDateFromIters(iters, msm : MITgcmSimMetadata):
     
-    return msm.start_datetime + pd.Timedelta(seconds=msm.deltaT) * iters
+    return msm.start_datetime + msm.deltaT * iters
 
 
 
-def loadAveragedDataByDateRange(beg_dt, end_dt, msm : MITgcmSimMetadata, region=None, lev=(), merge=True, datasets=[], inclusive="both"):
+def loadAveragedDataByDateRange(beg_dt, end_dt, msm : MITgcmSimMetadata, region=None, lev=(), merge=True, datasets=[], inclusive="right"):
    
-    dts = pd.date_range(beg_dt, end_dt, freq=pd.Timedelta(msm.dumpfreq, unit='s'), inclusive=inclusive)
+    dts = pd.date_range(beg_dt, end_dt, freq=msm.dumpfreq, inclusive=inclusive)
 
     data = None
 
-    print(dts)
     for i, dt in enumerate(dts):
        
         print("Load date: %s" % (dt.strftime("%Y-%m-%d %H:%M:%S"))) 
