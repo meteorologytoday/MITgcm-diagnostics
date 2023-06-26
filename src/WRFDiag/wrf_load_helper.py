@@ -4,6 +4,7 @@ import numpy as np
 import os
 import os.path
 import re
+from datetime import datetime
 
 engine = "scipy"
 
@@ -34,19 +35,29 @@ def getFilenameAndFrameFromDate(dt, wsm : WRFSimMetadata, prefix="wrfout_d01_", 
     return filename, frame
 
 
-def listWRFOutputFiles(dirname, prefix="wrfout_d01_", append_dirname=False):
+def listWRFOutputFiles(dirname, prefix="wrfout_d01_", append_dirname=False, time_rng=None):
 
     valid_files = []
     
-    pattern = "^%s[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}:[0-9]{2}:[0-9]{2}$" % (prefix,)
+    pattern = "^%s(?P<DATETIME>[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}:[0-9]{2}:[0-9]{2})$" % (prefix,)
     ptn = re.compile(pattern)
+    file_times = []
+
+    if time_rng is not None:
+        filter_time = True
+
+
     for fname in os.listdir(dirname):
-        if ptn.match(fname):
+
+        m =  ptn.match(fname)
+        if m:
             if append_dirname:
                 fname = os.path.join(dirname, fname)
 
-            valid_files.append(fname)
-
+            if filter_time:
+                t = pd.Timestamp(datetime.strptime(m.group('DATETIME'), "%Y-%m-%d_%H:%M:%S"))
+                if time_rng[0] <= t and t < time_rng[1]:
+                    valid_files.append(fname)
 
     valid_files.sort()
 
@@ -58,10 +69,10 @@ def listWRFOutputFiles(dirname, prefix="wrfout_d01_", append_dirname=False):
     
 
 
-def loadWRFDataFromDir(input_dir, prefix="wrfout_d01_"):
+def loadWRFDataFromDir(input_dir, prefix="wrfout_d01_", time_rng=None):
     
 
-    fnames = listWRFOutputFiles(input_dir, prefix=prefix, append_dirname=True)
+    fnames = listWRFOutputFiles(input_dir, prefix=prefix, append_dirname=True, time_rng=time_rng)
     ds = xr.open_mfdataset(fnames, decode_times=False, engine=engine, concat_dim=["Time"], combine='nested')
 
     t = [pd.Timestamp("%s %s" % (t[0:10], t[11:19])) for t in ds.Times.astype(str).to_numpy()]
