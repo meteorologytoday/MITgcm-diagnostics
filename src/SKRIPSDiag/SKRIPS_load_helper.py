@@ -1,20 +1,18 @@
 import numpy as np
 import xarray as xr
-import argparse
 import pandas as pd
-from pathlib import Path
-import tool_fig_config
 
 import os.path
 import os
 
+
+import MITgcmDiff.loadFunctions
+
+import MITgcmDiag
+import MITgcmDiag.data_loading_helper
+
 from WRFDiag import wrf_load_helper
 wrf_load_helper.engine = "netcdf4"
-
-import MITgcmDiff.loadFunctions as lf
-import MITgcmDiff.mixed_layer_tools as mlt
-import MITgcmDiff.calBudget as cb
-import MITgcmDiag.data_loading_helper as dlh
 
 class SKRIPSMetadata:
 
@@ -30,7 +28,7 @@ class SKRIPSMetadata:
     ):
 
 
-        self.msm = MITgcmDiag.dlh.MITgcmSimMetadata(
+        self.msm = MITgcmDiag.data_loading_helper.MITgcmSimMetadata(
             start_datetime,
             mitgcm_deltaT,
             mitgcm_dumpfreq,
@@ -38,12 +36,9 @@ class SKRIPSMetadata:
             mitgcm_grid_dir,
         )
         self.start_datetime = pd.Timestamp(start_datetime)
-        self.deltaT = pd.Timedelta(seconds=deltaT)
-        self.dumpfreq = pd.Timedelta(seconds=dumpfreq)
-        self.data_dir = data_dir
-        self.grid_dir = grid_dir
         
         self.WRF_prefix = WRF_prefix
+        self.WRF_data_dir = WRF_data_dir
         self.WRF_extend_time = WRF_extend_time
 
 
@@ -61,13 +56,12 @@ def loadSKRIPS(
         extend_time=skrips_meta.WRF_extend_time,
     )
         
-    WRF_ds = WRF_ds.mean(dim="time", keep_attrs=True)
+    #WRF_ds = WRF_ds.mean(dim="time", keep_attrs=True)
 
     # ========== [ Loading MITgcm data ] ==========
-    msm = dlh.MITgcmSimMetadata(args.mitgcm_beg_date, args.mitgcm_deltaT, args.mitgcm_dumpfreq, input_dir, input_dir)
-    coo, crop_kwargs = lf.loadCoordinateFromFolderAndWithRange(skrips_meta.msm.grid_dir, nlev=None, lat_rng=args.lat_rng, lon_rng=args.lon_rng)
+    coo, crop_kwargs = MITgcmDiff.loadFunctions.loadCoordinateFromFolderAndWithRange(skrips_meta.msm.grid_dir, nlev=None)
 
-    MITgcm_data  = dlh.loadAveragedDataByDateRange(beg_dt, end_dt, msm, **crop_kwargs, datasets=["diag_state",], inclusive="right")  # inclusive is right because output at time=t is the average from "before" to t
+    MITgcm_data  = MITgcmDiag.data_loading_helper.loadAveragedDataByDateRange(beg_dt, end_dt, skrips_meta.msm, **crop_kwargs, datasets=["diag_state",], inclusive="right", avg=False)  # inclusive is right because output at time=t is the average from "before" to t
 
 
     return WRF_ds, MITgcm_data, coo 

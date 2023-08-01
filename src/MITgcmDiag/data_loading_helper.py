@@ -39,7 +39,7 @@ def getDateFromIters(iters, msm : MITgcmSimMetadata):
 
 
 
-def loadAveragedDataByDateRange(beg_dt, end_dt, msm : MITgcmSimMetadata, region=None, lev=(), merge=True, datasets=[], inclusive="right"):
+def loadAveragedDataByDateRange(beg_dt, end_dt, msm : MITgcmSimMetadata, region=None, lev=(), merge=True, datasets=[], inclusive="right", avg=True):
    
     dts = pd.date_range(beg_dt, end_dt, freq=msm.dumpfreq, inclusive=inclusive)
 
@@ -50,17 +50,28 @@ def loadAveragedDataByDateRange(beg_dt, end_dt, msm : MITgcmSimMetadata, region=
         print("Load date: %s" % (dt.strftime("%Y-%m-%d %H:%M:%S"))) 
         _data = loadDataByDate(dt, msm, region=region, lev=lev, merge=True, datasets=datasets)
 
-        if i == 0:
-            data = _data
+        if avg:
+            if i == 0:
+                data = _data
+
+            else:
+                for k in data.keys():
+                    data[k] += _data[k]
 
         else:
-            for k in data.keys():
-                data[k] += _data[k]
+            if i == 0:
+                data = {
+                    k : [_d, ]
+                    for k, _d in _data.items()
+                }
+            else:
+                for k in data.keys():
+                    data[k].append(_data[k])
 
 
- 
-    for k in data.keys():
-         data[k] /= len(dts)
+    if avg: 
+        for k in data.keys():
+             data[k] /= len(dts)
 
 
     return data
