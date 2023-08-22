@@ -73,6 +73,7 @@ def listWRFOutputFiles(dirname, prefix="wrfout_d01_", append_dirname=False, time
     ptn = re.compile(pattern)
     file_times = []
 
+    filter_time = False
     if time_rng is not None:
         filter_time = True
 

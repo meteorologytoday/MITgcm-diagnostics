@@ -18,6 +18,21 @@ class MITgcmSimMetadata:
         self.grid_dir = grid_dir
         
 
+
+def genMITgcmFilenames(
+    dataset,
+    dt,
+    msm,
+):
+    
+    iters = getItersFromDate(dt, msm)
+    
+    filename_first_part = "%s.%010d" % (dataset, iters)
+
+    return "%s.data" % (filename_first_part,) , "%s.meta" % (filename_first_part,)
+    
+
+
 def getItersFromDate(dt, msm : MITgcmSimMetadata):
    
     if type(dt) == str:
@@ -111,6 +126,51 @@ def loadDataByDate(dt, msm : MITgcmSimMetadata, region=None, lev=(), merge=True,
 
 
     return data
+
+
+
+def raw_loadAveragedDataByDateRange(beg_dt, end_dt, msm : MITgcmSimMetadata, dataset, inclusive="right"):
+   
+    dts = pd.date_range(beg_dt, end_dt, freq=msm.dumpfreq, inclusive=inclusive)
+
+    data = None
+
+    bundle = None
+    for i, dt in enumerate(dts):
+       
+        print("Load date: %s" % (dt.strftime("%Y-%m-%d %H:%M:%S"))) 
+        _bundle = raw_loadDataByDate(dt, msm, dataset)
+
+        
+        if i == 0:
+            bundle = _bundle
+            data = _bundle['data']
+
+        else:
+            data += _bundle['data']
+        
+        
+    data /= len(dts)
+    bundle['data'] = data
+
+    return bundle
+
+
+# A wrapper for rdmds
+def raw_loadDataByDate(dt, msm : MITgcmSimMetadata, dataset):
+    
+    iters = getItersFromDate(dt, msm)
+    
+    print("Loading file of ", "%s/%s" % (msm.data_dir, dataset,))
+    print("Load date: %s" % (dt.strftime("%Y-%m-%d %H:%M:%S"))) 
+    bundle = mds.rdmds("%s/%s" % (msm.data_dir, dataset,), iters, returnmeta=True)
+
+
+    return dict(
+        data=bundle[0],
+        iters=bundle[1][0],
+        metadata=bundle[2],
+    )
 
 
 
