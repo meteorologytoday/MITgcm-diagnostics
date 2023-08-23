@@ -97,7 +97,8 @@ def listWRFOutputFiles(dirname, prefix="wrfout_d01_", append_dirname=False, time
 
 
     return valid_files
-    
+
+ 
 def _loadWRFTimeOnly(filename):
    
     with xr.open_dataset(filename, engine=engine, decode_times=False,) as ds:
@@ -106,58 +107,68 @@ def _loadWRFTimeOnly(filename):
     return t
 
 
+def loadWRFDataFromDir(input_dir, prefix="wrfout_d01_", time_rng=None, extend_time=None, verbose=False, avg=False):
     
-
-
-def loadWRFDataFromDir(input_dir, prefix="wrfout_d01_", time_rng=None, extend_time=None):
-    
-
     if time_rng is not None and extend_time is not None:
         load_time_rng = [time_rng[0] - extend_time, time_rng[1] + extend_time]
 
     else:
         load_time_rng = time_rng
-
+    
     fnames = listWRFOutputFiles(input_dir, prefix=prefix, append_dirname=True, time_rng=load_time_rng)
-
-
+    
+    
     ds = xr.open_mfdataset(fnames, decode_times=False, engine=engine, concat_dim=["Time"], combine='nested')
+    
+    if "Time" in ds:
+        t = ds.Time
+    
+    else:
+        t = [pd.Timestamp("%s %s" % (t[0:10], t[11:19])) for t in ds.Times.astype(str).to_numpy()]
+    
 
-    t = [pd.Timestamp("%s %s" % (t[0:10], t[11:19])) for t in ds.Times.astype(str).to_numpy()]
-   
+    if verbose:
+        print("Going to load time: ")
+        for i, _t in enumerate(t):
+            print("[%d] %s" % (i, _t.strftime("%Y-%m-%d_%H")))
+
+     
     ts = xr.DataArray(
         data = t,
         dims = ["Time"],
     ).rename('time')
-  
+    
     ds = xr.merge([ds, ts]).rename({'Time':'time'})
-
+    
     if time_rng is not None:
-        
         # Find the range
         t = ds.time.to_numpy()
         flags = (t >= time_rng[0]) & (t < time_rng[1])
         i0 = findfirst(flags)
         i1 = findlast(flags)
         ds = ds.isel(time=slice(i0, i1+1))
-
-    return ds
-
-
-def loadWRFData(wsm, filename=None):
-
-    
-    
-    ds = xr.open_dataset(filename, decode_times=False, engine=engine)
-    t = [pd.Timestamp("%s %s" % (t[0:10], t[11:19])) for t in ds.Times.astype(str).to_numpy()]
    
+
+    if avg:
+        ds = ds.mean(dim="time").expand_dims(dim={"time": ts[0:1]}, axis=0)
+        
+
+ 
+    return ds
+    
+    
+def loadWRFData(wsm, filename=None):
+     
+    ds = xr.open_dataset(filename, decode_times=False, engine=engine)
+    t = [ pd.Timestamp("%s %s" % (t[0:10], t[11:19])) for t in ds.Times.astype(str).to_numpy() ]
+    
     ts = xr.DataArray(
         data = t,
         dims = ["Time"],
     ).rename('time')
-  
+    
     ds = xr.merge([ds, ts]).rename({'Time':'time'})
-
+    
     return ds
 
 

@@ -149,6 +149,10 @@ def raw_loadAveragedDataByDateRange(beg_dt, end_dt, msm : MITgcmSimMetadata, dat
         else:
             data += _bundle['data']
         
+
+        if i == len(dts)-1:
+             
+            bundle['iters'] = _bundle['iters']
         
     data /= len(dts)
     bundle['data'] = data

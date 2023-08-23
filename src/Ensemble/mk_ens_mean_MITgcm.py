@@ -60,6 +60,8 @@ parser = argparse.ArgumentParser(
 parser.add_argument('--start-datetime', type=str, help='Begin datetime of MITgcm simulation.', required=True)
 parser.add_argument('--deltaT', type=float, help='Timestep.', required=True)
 parser.add_argument('--dumpfreq', type=float, help='Dumpfreq.', required=True)
+parser.add_argument('--avg-hrs', type=int, help='Dumpfreq.', required=True)
+parser.add_argument('--skip-hrs', type=int, help='Dumpfreq.', required=True)
 parser.add_argument('--date-rng', type=str, nargs=2, help='Date range. If not given then all.', required=True)
 parser.add_argument('--root-dir', type=str, help='Input directory that contains all the runs', required=True)
 parser.add_argument('--run-label', type=str, help='Label of the run.', required=True)
@@ -71,6 +73,10 @@ parser.add_argument('--naming-rule', type=str, help='Naming rule', default="stan
 args = parser.parse_args()
 
 print(args)
+
+skip_hrs = pd.Timedelta(hours=args.skip_hrs)
+avg_hrs  = pd.Timedelta(hours=args.avg_hrs)
+
 
 beg_dt = pd.Timestamp(args.date_rng[0])
 end_dt = pd.Timestamp(args.date_rng[1])
@@ -95,9 +101,6 @@ for j, ens in enumerate(ensemble_members):
         )
     )
 
-
-    
-
 if not os.path.exists(args.output_dir):
     print("Making output direcory: %s" % (args.output_dir,))
     os.makedirs(args.output_dir)
@@ -109,18 +112,23 @@ def doWork(dt, dataset):
     dt_str = dt.strftime("%Y-%m-%d_%H")
     result = dict(status="OK", dt=dt, dataset=dataset)
     print("Doing datetime %s of dataset %s" % (dt_str, dataset))
-    
+   
+    beg_time = dt 
+    end_time = dt + avg_hrs 
 
     # Load data one by one
 
     try:
         bundle    = None
         data_mean = None
-        data_avgsqr = None
+        data_std = None
+
+        N = len(ensemble_members)
+
         for i, ens in enumerate(ensemble_members):
             _bundle = dlh.raw_loadAveragedDataByDateRange(
-                dt,
-                dt + ref_msm.dumpfreq,
+                beg_time,
+                end_time,
                 msms[i],
                 dataset=dataset,
                 inclusive="right",
@@ -129,21 +137,34 @@ def doWork(dt, dataset):
             if i == 0:
                 bundle = _bundle
                 data_mean = bundle['data']
-                data_avgsqr = bundle['data'] ** 2
             else:
                 data_mean   += _bundle['data']
-                data_avgsqr += _bundle['data'] ** 2
 
-        data_mean /= len(ensemble_members)
-        data_avgsqr /= len(ensemble_members)
+        data_mean /= N
+
+
+        for i, ens in enumerate(ensemble_members):
+            _bundle = dlh.raw_loadAveragedDataByDateRange(
+                beg_time,
+                end_time,
+                msms[i],
+                dataset=dataset,
+                inclusive="right",
+            )
+
+            if i == 0:
+                data_std = (_bundle['data'] - data_mean)**2
+            else:
+                data_std += (_bundle['data'] - data_mean)**2
+
+        data_std = ( data_std / (N-1) )**0.5
 
         del bundle['data']
         bundle['data_mean'] = data_mean     
-        bundle['data_avgsqr'] = data_avgsqr
-    
+        bundle['data_std'] = data_std
 
         # Save data
-        for stat in ['mean', 'avgsqr']:
+        for stat in ['mean', 'std']:
             output_dataset = "%s_%s" % (stat, dataset)
             output_dataset_full = "%s/%s" % (args.output_dir, output_dataset)
             print("[%s] Output: %s" % (dt_str, output_dataset_full,))
@@ -177,7 +198,7 @@ with Pool(processes=args.nproc) as pool:
         for j, dataset in enumerate(args.datasets):
 
             output_filenames = []
-            for stat in ['mean', 'avgsqr']:
+            for stat in ['mean', 'std']:
                 _filenames = dlh.genMITgcmFilenames("%s_%s" % (stat, dataset), dt + ref_msm.dumpfreq, ref_msm)
                 output_filenames.extend(_filenames)
             

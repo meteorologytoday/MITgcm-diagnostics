@@ -9,7 +9,10 @@ import WRFDiag.wrf_load_helper as wlh
 import pandas as pd
 import subprocess
 import re
+import traceback
 
+
+wlh.engine = "netcdf4"
 
 def genRunDirName(run_label, ens, root_dir="", naming_rule="standard"):
     
@@ -63,6 +66,7 @@ parser.add_argument('--ensemble-members', type=str, help='Members used to do mea
 parser.add_argument('--varnames', type=str, nargs='*', help='Varnames needed to do ensemble mean. Empty means all.', default=[])
 parser.add_argument('--nproc', type=int, help='Number of subprocesses.', default=1)
 parser.add_argument('--output-dir', type=str, help='Output dir', required=True)
+parser.add_argument('--wrf-prefix', type=str, help='Output dir', default='wrfout_d01_')
 parser.add_argument('--naming-rule', type=str, help='Naming rule', default="standard", choices=['standard', 'old'])
 args = parser.parse_args()
 
@@ -74,102 +78,155 @@ date_rng = args.date_rng
 
 skip_hrs = pd.Timedelta(hours=args.skip_hrs)
 avg_hrs  = pd.Timedelta(hours=args.avg_hrs)
-dts = pd.date_range(args.date_rng[0], args.date_rng[1], freq=skip_hrs, inclusive="left")
-
-
-if date_rng is not None:
-
-    beg_dt = pd.Timestamp(args.date_rng[0])
-    end_dt = pd.Timestamp(args.date_rng[1])
-    
-    date_rng = [beg_dt, end_dt]    
-
 
 ensemble_members = decomposeRange(args.ensemble_members)
 
 input_dirs = []
 for j, ens in enumerate(ensemble_members):
-    input_dirs.append(genRunDirName(args.run_label, ens, naming_rule=args.naming_rule))
+    input_dirs.append(os.path.join(args.root_dir, genRunDirName(args.run_label, ens, naming_rule=args.naming_rule)))
     
-
-# List all possible files from one of the ensemble members
-test_dir = os.path.join(args.root_dir, input_dirs[0])
-wrf_filenames = wlh.listWRFOutputFiles(test_dir, time_rng=date_rng)
-
-print("========== List of found wrf files in %s =========" % (test_dir,))
-for i, wrf_filename in enumerate(wrf_filenames):
-    print("[%2d] %s" % (i, wrf_filename,))
-
-
-if len(args.varnames) == 0:
-    varnames_cmd = ""
-
-else:
-    varnames_cmd = "-v %s" % ( ",".join(args.varnames), )
-
-
 if not os.path.exists(args.output_dir):
     print("Making output direcory: %s" % (args.output_dir,))
     os.makedirs(args.output_dir)
 
 
-work_batches = [
-    [],  # mean
-    [],  # avgsqr
-]
+def doWork(time_rng, output_filename_mean, output_filename_std):
+  
+    beg_time_str = time_rng[0].strftime("%Y-%m-%d_%H") 
+    end_time_str = time_rng[1].strftime("%Y-%m-%d_%H") 
+    print("Running time range: [%s , %s]" % (
+        beg_time_str,
+        end_time_str,
+    ))
+
+    result = dict(status="OK", time_rng=time_rng)
+    try:
+
+        ds_mean = None
+        ds_sqr  = None
+        stat_varnames = []
+        shared_attrs = None
+        N = len(input_dirs)
+
+        # In the following code, I compute the mean and
+        # std separately. This is because the fomula
+        # var = <x^2> - <x>^2 can be negative due to numerical
+        # error. Therefore, I need the formula
+        # var = N^(-1) \Sigma (x_i - <x>)^2 
+        # to ensure the sign is positive
+
+        for i, input_dir in enumerate(input_dirs):
+                
+            _ds = wlh.loadWRFDataFromDir(input_dir, prefix=args.wrf_prefix, time_rng=time_rng, verbose=True, avg=True)
+            if i == 0:
+
+                # Loop through variable to know which to work on
+                if len(args.varnames) == 0:
+                    all_varnames = list(_ds.keys())
+                    for varname in all_varnames:
+                        if _ds[varname].dtype in [ np.float64, np.float32 ]:
+                            stat_varnames.append(varname)
+
+                else:
+                    stat_varnames.extend(args.varnames)
+
+                shared_attrs = _ds.attrs
+            
+            else:
+                # Test this first
+                non_exist_varnames = []
+                for k in stat_varnames:
+                    if not (k in _ds):
+                        non_exist_varnames.append(k)
+
+                if len(non_exist_varnames) != 0:
+                    raise Exception("Error: The variable(s) %s do not exist!" % ( ", ".join(non_exist_varnames),))
+
+            # Extract varialbes
+            __ds = xr.merge([ _ds[varname] for varname in stat_varnames ])
+
+            if i == 0:
+                ds_mean = __ds
+
+            else:
+                ds_mean += __ds
 
 
-for i, wrf_filename in enumerate(wrf_filenames):
-    output_filename = os.path.join(args.output_dir, "%s" % (wrf_filename, ))
-    input_filenames = [os.path.join(input_dir, wrf_filename) for input_dir in input_dirs]
-    cmd = ["ncea", varnames_cmd, "-O", "-p",  args.root_dir, *input_filenames, output_filename]
-    cmd = " ".join(cmd)
-    print(cmd)
-    work_batches[0].append([output_filename, cmd])
+        ds_mean /= N 
+ 
+        for i, input_dir in enumerate(input_dirs):
+                
+            _ds = wlh.loadWRFDataFromDir(input_dir, prefix=args.wrf_prefix, time_rng=time_rng, verbose=True, avg=True)
+            # No need to test variables anymore because they have been all tested.
+            # Extract varialbes
+            __ds = xr.merge([ _ds[varname] for varname in stat_varnames ])
+
+            if i == 0:
+                ds_std  = (__ds - ds_mean)**2
+
+            else:
+                ds_std  += (__ds - ds_mean)**2
 
 
-for i, wrf_filename in enumerate(wrf_filenames):
-    output_filename = os.path.join(args.output_dir, "avgsqr_%s" % (wrf_filename, ))
-    input_filenames = [os.path.join(input_dir, wrf_filename) for input_dir in input_dirs]
-    cmd = ["nces", varnames_cmd, "-O", "-p",  args.root_dir, "-y avgsqr", *input_filenames, output_filename]
-    cmd = " ".join(cmd)
-    print(cmd)
-    work_batches[1].append([output_filename, cmd])
+        ds_std  /= N
+       
+        ds_std = ( ds_std * ( N / ( N - 1 ) ) )**0.5
 
-
-
-
-def doWork(work_id, cmd):
+        print("Output files of time %s to %s" % (beg_time_str, end_time_str,))
+        ds_mean.to_netcdf(output_filename_mean, unlimited_dims='time')
+        ds_std.to_netcdf(output_filename_std, unlimited_dims='time')
    
-    print("Running command: ", cmd) 
-    r = subprocess.run(cmd, capture_output=True, shell=True)
+    except Exception as e:
+        
+        result['status'] = "ERROR"        
+        traceback.print_stack()
+        traceback.print_exc()
 
-    if r.returncode != 0:
-        print(r)
-
-
-    return work_id, r.returncode 
+    return result
 
 
 
 with Pool(processes=args.nproc) as pool:
 
     input_args = []
+    dts = pd.date_range(args.date_rng[0], args.date_rng[1], freq=skip_hrs, inclusive="left")
     
-    for work_batch in work_batches:
-        
-        for work_id, (output_filename, cmd) in enumerate(work_batch):
+    fmt = "%Y-%m-%d_%H:%M:%S"
+    
+    for dt in dts:
 
-            if os.path.exists(output_filename):
-                print("Output file: %s already exists. Skip it." % (output_filename,))
-                continue
+        beg_time = dt
+        end_time = dt + avg_hrs
 
-            input_args.append((work_id, cmd))
+        dtstr = dt.strftime(fmt)
+        output_filenames = dict(
+            output_filename_mean = os.path.join(args.output_dir, "mean_%s%s" % (args.wrf_prefix, dtstr, )),
+            output_filename_std  = os.path.join(args.output_dir, "std_%s%s"  % (args.wrf_prefix, dtstr, )),
+        )
 
-        results = pool.starmap(doWork, input_args)
+        all_exists = True
+        for _, output_filename in output_filenames.items():
+            all_exists = all_exists and os.path.exists(output_filename)
 
-        for work_id, returncode in enumerate(results):
 
-            if returncode != 0:
-                print('[%d] Failed to generate output file %s.' % (work_id, work_batch[work_id][1]))
+        if all_exists:
+            print("Output files of date %s all exists. Skip it." % (dtstr,))
+            continue
+
+        input_args.append(([beg_time, end_time], output_filenames['output_filename_mean'], output_filenames['output_filename_std']))
+
+
+    print("Ready to distribute jobs... ")
+
+    results = pool.starmap(doWork, input_args)
+
+    for i, result in enumerate(results):
+
+        if result['status'] != 'OK':
+            
+            print('[%d] Failed to generate output files for time_rng = [ %s, %s ].' % (
+                i,
+                result['time_rng'][0].strftime("%Y-%m-%d_%H"),
+                result['time_rng'][1].strftime("%Y-%m-%d_%H"),
+            ))
 
