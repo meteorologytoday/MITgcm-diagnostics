@@ -117,29 +117,25 @@ def loadWRFDataFromDir(input_dir, prefix="wrfout_d01_", time_rng=None, extend_ti
     
     fnames = listWRFOutputFiles(input_dir, prefix=prefix, append_dirname=True, time_rng=load_time_rng)
     
-    
-    ds = xr.open_mfdataset(fnames, decode_times=False, engine=engine, concat_dim=["Time"], combine='nested')
-    
-    if "Time" in ds:
-        t = ds.Time
-    
+    # Do a test to see if file contain 'time' (values) or 'Times' (String)
+    test_ds = xr.open_dataset(fnames[0], decode_times=False, engine=engine)
+  
+
+    if 'time' in test_ds:
+        ds = xr.open_mfdataset(fnames, decode_times=True, engine=engine, concat_dim=["time"], combine='nested')
+ 
     else:
+        ds = xr.open_mfdataset(fnames, decode_times=False, engine=engine, concat_dim=["Time"], combine='nested')
         t = [pd.Timestamp("%s %s" % (t[0:10], t[11:19])) for t in ds.Times.astype(str).to_numpy()]
+        ts = xr.DataArray(
+            data = t,
+            dims = ["Time"],
+        ).rename('time')
     
+       
+        ds = xr.merge([ds, ts]).rename({'Time':'time'})
+       
 
-    if verbose:
-        print("Going to load time: ")
-        for i, _t in enumerate(t):
-            print("[%d] %s" % (i, _t.strftime("%Y-%m-%d_%H")))
-
-     
-    ts = xr.DataArray(
-        data = t,
-        dims = ["Time"],
-    ).rename('time')
-    
-    ds = xr.merge([ds, ts]).rename({'Time':'time'})
-    
     if time_rng is not None:
         # Find the range
         t = ds.time.to_numpy()
@@ -148,12 +144,22 @@ def loadWRFDataFromDir(input_dir, prefix="wrfout_d01_", time_rng=None, extend_ti
         i1 = findlast(flags)
         ds = ds.isel(time=slice(i0, i1+1))
    
+    if verbose:
+        print("Loaded time: ")
+        for i, _t in enumerate(pd.DatetimeIndex(ds.time)):
+            print("[%d] %s" % (i, _t.strftime("%Y-%m-%d_%H")))
 
     if avg:
-        ds = ds.mean(dim="time").expand_dims(dim={"time": ts[0:1]}, axis=0)
-        
+        # Unset XLAT and XLONG as coordinate
+        # For some reason they disappeared after taking the time mean
+        ds = ds.reset_coords(names=['XLAT', 'XLONG']).mean(dim="time", keep_attrs=True).expand_dims(dim={"time": ts[0:1]}, axis=0)
 
- 
+
+    ds = ds.assign_coords(
+        XLAT=( ('time', 'south_north', 'west_east'), ds.XLAT.data), 
+        XLONG=( ('time', 'south_north', 'west_east'), ds.XLONG.data),
+    )
+    
     return ds
     
     

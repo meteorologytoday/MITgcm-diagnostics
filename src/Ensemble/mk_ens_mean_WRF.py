@@ -108,6 +108,8 @@ def doWork(time_rng, output_filename_mean, output_filename_std):
         shared_attrs = None
         N = len(input_dirs)
 
+        coords = None
+
         # In the following code, I compute the mean and
         # std separately. This is because the fomula
         # var = <x^2> - <x>^2 can be negative due to numerical
@@ -131,6 +133,7 @@ def doWork(time_rng, output_filename_mean, output_filename_std):
                     stat_varnames.extend(args.varnames)
 
                 shared_attrs = _ds.attrs
+                #coords = [ _ds[varname] for varname in ["XLAT", "XLONG", ] ]
             
             else:
                 # Test this first
@@ -169,8 +172,13 @@ def doWork(time_rng, output_filename_mean, output_filename_std):
 
 
         ds_std  /= N
-       
         ds_std = ( ds_std * ( N / ( N - 1 ) ) )**0.5
+
+        #ds_mean = xr.merge([ds_mean, *coords]).assign_attrs(**shared_attrs)
+        #ds_std = xr.merge([ds_std, *coords]).assign_attrs(**shared_attrs)
+        ds_mean = ds_mean.assign_attrs(**shared_attrs)
+        ds_std  = ds_std.assign_attrs(**shared_attrs)
+
 
         print("Output files of time %s to %s" % (beg_time_str, end_time_str,))
         ds_mean.to_netcdf(output_filename_mean, unlimited_dims='time')
@@ -200,7 +208,7 @@ with Pool(processes=args.nproc) as pool:
 
         dtstr = dt.strftime(fmt)
         output_filenames = dict(
-            output_filename_mean = os.path.join(args.output_dir, "mean_%s%s" % (args.wrf_prefix, dtstr, )),
+            output_filename_mean = os.path.join(args.output_dir, "%s%s" % (args.wrf_prefix, dtstr, )),
             output_filename_std  = os.path.join(args.output_dir, "std_%s%s"  % (args.wrf_prefix, dtstr, )),
         )
 

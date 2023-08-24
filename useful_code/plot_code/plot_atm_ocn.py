@@ -1,5 +1,6 @@
 import traceback
 import numpy as np
+import scipy
 import xarray as xr
 import argparse
 import pandas as pd
@@ -53,7 +54,7 @@ def produceDiagQuantities(ds):
 
     MU = ds.MU + ds.MUB
     
-    H_DIAB_TTL = (MU * ds.H_DIABATIC * ds.DNW / g0 * c_p).sum(dim="bottom_top").rename("H_DIAB_TTL")
+    H_DIAB_TTL = - (MU * ds.H_DIABATIC * ds.DNW / g0 * c_p).sum(dim="bottom_top").rename("H_DIAB_TTL")
     
     PREC_ACC_DT = ds.attrs['PREC_ACC_DT'] * 60
     print("PREC_ACC_DT = ", PREC_ACC_DT)
@@ -130,6 +131,7 @@ parser.add_argument('--sim-names', type=str, nargs='*', help='Simulation names',
 parser.add_argument('--mitgcm-beg-date', type=str, help='The datetime of iteration zero in mitgcm.', required=True)
 parser.add_argument('--mitgcm-deltaT', type=float, help='The timestep (sec) of mitgcm (deltaT).', required=True)
 parser.add_argument('--mitgcm-dumpfreq', type=float, help='The timestep (sec) of mitgcm dump frequency.', required=True)
+parser.add_argument('--mitgcm-grid-dir', type=str, help='Grid directory of MITgcm.', default="")
 parser.add_argument('--pressure-factor', type=float, help='Pressure factor', default=1.0)
 
 
@@ -140,11 +142,18 @@ parser.add_argument('--lat-rng', type=float, nargs=2, help='Latitudes in degree'
 parser.add_argument('--lon-rng', type=float, nargs=2, help='Longitudes in degree', default=[360-180, 360-144])
 parser.add_argument('--deg-lat-per-inch', type=float, help='Degree latitude per plot-inch.', default=10.0)
 parser.add_argument('--deg-lon-per-inch', type=float, help='Degree longitude per plot-inch', default=10.0)
+parser.add_argument('--pvalue-threshold', type=float, help='P value threshold.', default=0.10)
 parser.add_argument('--varnames', type=str, nargs='+', help='Plotted variable names', default=['TTL_HFLX',])
 parser.add_argument('--overwrite', action="store_true")
 parser.add_argument('--no-display', action="store_true")
+parser.add_argument('--is-ensemble', action="store_true")
+parser.add_argument('--ensemble-members', type=int, help="Ensemble members. Assume equal sampling members.", default=-1)
+
 args = parser.parse_args()
 print(args)
+
+if args.is_ensemble and args.ensemble_members == -1:
+    raise Exception("The option `--is-ensemble` is set but `--ensemble-members` is not given.")
 
 if np.isnan(args.avg_hrs):
     print("--avg-hrs is not set. Set it to --skip-hrs = %d" % (args.skip_hrs,))
@@ -172,10 +181,11 @@ heat_flux_setting = dict(
         contourf_levs   = np.linspace(-400, 400,  41),
         contourf_ticks  = np.linspace(-400, 400,  9),
     ),
+
     diff = dict(
         contourf_cmap   = "bwr",
-        contourf_levs   = np.linspace(-50, 50, 21),
-        contourf_ticks  = np.linspace(-50, 50, 9),
+        contourf_levs   = np.linspace(-20, 20, 21),
+        contourf_ticks  = np.linspace(-20, 20, 9),
     )
 )
 
@@ -191,6 +201,24 @@ levs_ps_diff = np.concatenate(
 plot_infos = dict(
 
     atm = {
+
+        "PSFC" : dict(
+            factor = 100,
+            label  = "$P_\\mathrm{sfc}$",
+            unit   = "$\\mathrm{hPa}$",
+            ctl = dict(
+                contourf_cmap   = "bone_r",
+                contourf_levs   = np.linspace(980, 1040, 16),
+                contourf_ticks  = np.linspace(980, 1040, 16),
+            ),
+
+            diff = dict(
+                contourf_cmap   = "bwr",
+                contourf_levs   = np.linspace(-4, 4, 21),
+                contourf_ticks  = np.linspace(-4, 4, 11),
+            )
+        ),
+
 
         "WIND10" : dict(
             factor = 1,
@@ -483,9 +511,8 @@ def plot(beg_dt, end_dt, output_filename):
 
 
         print("Load the %d-th folder: %s" % (i, input_dir,))
-        _ds = wrf_load_helper.loadWRFDataFromDir(input_dir, prefix="wrfout_d01_", time_rng=[beg_dt, end_dt], extend_time=pd.Timedelta(days=1))
-    
 
+        _ds = wrf_load_helper.loadWRFDataFromDir(input_dir, prefix="wrfout_d01_", time_rng=[beg_dt, end_dt], extend_time=pd.Timedelta(days=1))
 
         if i == 0:
             ref_time = _ds.time.to_numpy()
@@ -500,13 +527,39 @@ def plot(beg_dt, end_dt, output_filename):
             if any(ref_time != _ds.time.to_numpy()):
                 raise Exception("Time is not consistent between %s and %s" % (args.input_dirs[0], input_dir,))
 
+
         _ds = _ds.mean(dim="time", keep_attrs=True)
-        _data['atm'] = xr.merge([_ds, produceDiagQuantities(_ds)])
+
+        if not args.is_ensemble:
+            _data['atm'] = xr.merge([_ds, produceDiagQuantities(_ds)])
+        else:
+            _data['atm'] = _ds
+        
+        _ds_std = None
+        if args.is_ensemble:
+            try:
+                _ds_std = wrf_load_helper.loadWRFDataFromDir(input_dir, prefix="std_wrfout_d01_", time_rng=[beg_dt, end_dt], extend_time=pd.Timedelta(days=0))
+
+            except Exception as e:
+                print(e)
+                traceback.print_exc()
+                print("Error happens when trying to get standard deviation file. Ignore this.")
+
+                _ds_std = None
+
+        if _ds_std is not None:
+            _ds_std = _ds_std.mean(dim="time", keep_attrs=True)
+            _data['atm_std'] = _ds_std
 
         print("Load ocean data")
 
         try:
-            msm = dlh.MITgcmSimMetadata(args.mitgcm_beg_date, args.mitgcm_deltaT, args.mitgcm_dumpfreq, input_dir, input_dir)
+            if args.mitgcm_grid_dir != "":
+                mitgcm_grid_dir = args.mitgcm_grid_dir
+            else:
+                mitgcm_grid_dir = input_dir
+                
+            msm = dlh.MITgcmSimMetadata(args.mitgcm_beg_date, args.mitgcm_deltaT, args.mitgcm_dumpfreq, input_dir, mitgcm_grid_dir)
             coo, crop_kwargs = lf.loadCoordinateFromFolderAndWithRange(msm.grid_dir, nlev=None, lat_rng=args.lat_rng, lon_rng=args.lon_rng)
 
             coords['ocn']['lat'] = coo.grid["YC"][:, 0]
@@ -515,8 +568,21 @@ def plot(beg_dt, end_dt, output_filename):
             #ocn_z_T = coo.grid["RC"].flatten()
             #ocn_z_W = coo.grid["RF"].flatten()
             #ocn_mask = coo.grid["maskInC"]
-            data_ave  = dlh.loadAveragedDataByDateRange(beg_dt, end_dt, msm, **crop_kwargs, datasets=["diag_state",], inclusive="right")  # inclusive is right because output at time=t is the average from "before" to t
+
+            # Load average data
+            datasets = ["diag_state"]
+            data_ave  = dlh.loadAveragedDataByDateRange(beg_dt, end_dt, msm, **crop_kwargs, datasets=datasets, inclusive="right")  # inclusive is right because output at time=t is the average from "before" to t
             _data['ocn'] = produceDiagQuantities_ocn(data_ave)
+
+ 
+            # Load standard deviation
+            if args.is_ensemble:
+                new_datasets = []
+                for j in range(len(datasets)): 
+                    new_datasets.append("%s_%s" % ("std",  datasets[j],))
+
+                data_std  = dlh.loadAveragedDataByDateRange(beg_dt, end_dt, msm, **crop_kwargs, datasets=new_datasets, inclusive="right")  # inclusive is right because output at time=t is the average from "before" to t
+                _data['ocn_std'] = data_std
 
         except Exception as e:
             traceback.print_exc()
@@ -540,7 +606,7 @@ def plot(beg_dt, end_dt, output_filename):
 
     
     thumbnail_height = (lat_n - lat_s) / args.deg_lat_per_inch
-    thumbnail_width = (lon_e - lon_w) / args.deg_lon_per_inch
+    thumbnail_width  = (lon_e - lon_w) / args.deg_lon_per_inch
 
     figsize, gridspec_kw = tool_fig_config.calFigParams(
         w = thumbnail_width,
@@ -563,10 +629,8 @@ def plot(beg_dt, end_dt, output_filename):
         constrained_layout=False,
         squeeze=False,
     )
-
-
-    #print(list(ref_data.coords.keys()))
-
+    
+    
     fig.suptitle("%s ~ %s" % ( beg_dtstr, end_dtstr, ))
     
         
@@ -674,7 +738,10 @@ def plot(beg_dt, end_dt, output_filename):
                 fig.delaxes(_ax)
                 continue
 
-            var_diff = (_data[category][varname] - ref_data[category][varname]) / plot_info['factor']
+            var_mean1 = ref_data[category][varname]
+            var_mean2 = _data[category][varname]
+
+            var_diff = ( var_mean2 - var_mean1 ) / plot_info['factor']
             mappable = _ax.contourf(
                 coords[category]['lon'],
                 coords[category]['lat'],
@@ -684,10 +751,9 @@ def plot(beg_dt, end_dt, output_filename):
                 extend="both",
                 cmap=plot_info['diff']['contourf_cmap'],
             )
-
-            cax = tool_fig_config.addAxesNextToAxes(fig, _ax, "right", thickness=0.03, spacing=0.05)
-            cb = plt.colorbar(mappable, cax=cax, ticks=plot_info['diff']['contourf_ticks'], orientation="vertical", pad=0.0)
-            cb.ax.set_ylabel(" %s [ %s ]" % (plot_info["label"], plot_info["unit"]))
+            #cax = tool_fig_config.addAxesNextToAxes(fig, _ax, "right", thickness=0.03, spacing=0.05)
+            #cb = plt.colorbar(mappable, cax=cax, ticks=plot_info['diff']['contourf_ticks'], orientation="vertical", pad=0.0)
+            #cb.ax.set_ylabel(" %s [ %s ]" % (plot_info["label"], plot_info["unit"]))
 
             cs = _ax.contour(
                 coords['atm']['lon'],
@@ -699,10 +765,43 @@ def plot(beg_dt, end_dt, output_filename):
                 colors="black",
                 linewidths = 1.0,
             )
-
+            
             #plt.clabel(cs, fmt= ( "%d" if np.all(levs_ps % 1 != 0) else "%.1f" ))
     
+            if args.is_ensemble:
+                stdcat = "%s_std" % category
+                if stdcat in ref_data and varname in ref_data[stdcat]:
 
+                    print("Plotting significancy ... of variable %s " % (varname,))
+                    var_std1 = ref_data[stdcat][varname]
+                    var_std2 = _data[stdcat][varname]
+
+                    # Doing T-test
+                    _tscore, _pvalues = scipy.stats.ttest_ind_from_stats(
+                        var_mean1, var_std1, args.ensemble_members,
+                        var_mean2, var_std2, args.ensemble_members,
+                        equal_var=True,
+                        alternative='two-sided',
+                    )
+
+                    cs = _ax.contourf(
+                        coords[category]['lon'],
+                        coords[category]['lat'],
+                        _pvalues,
+                        cmap=None,
+                        colors='none',
+                        levels=[-1, args.pvalue_threshold],
+                        hatches=[".."],
+                        transform=proj_norm, 
+                    )
+
+                    # Remove the contour lines for hatches
+                    for _, collection in enumerate(cs.collections):
+                        collection.set_edgecolor("black")
+                        collection.set_linewidth(0.)   
+         
+
+ 
  
         case_ax[0].set_title(args.sim_names[i])
 

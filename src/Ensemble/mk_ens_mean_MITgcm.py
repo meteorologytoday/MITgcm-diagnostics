@@ -164,8 +164,9 @@ def doWork(dt, dataset):
         bundle['data_std'] = data_std
 
         # Save data
-        for stat in ['mean', 'std']:
-            output_dataset = "%s_%s" % (stat, dataset)
+        for stat, prefix in dict(mean="", std="std_").items():
+
+            output_dataset = "%s%s" % (prefix, dataset)
             output_dataset_full = "%s/%s" % (args.output_dir, output_dataset)
             print("[%s] Output: %s" % (dt_str, output_dataset_full,))
                 
@@ -190,7 +191,7 @@ def doWork(dt, dataset):
 with Pool(processes=args.nproc) as pool:
 
     input_args = []
-    dts = pd.date_range(beg_dt, end_dt, freq=ref_msm.dumpfreq, inclusive="left")
+    dts = pd.date_range(beg_dt, end_dt, freq=skip_hrs, inclusive="left")
     
     for i, dt in enumerate(dts):
             
