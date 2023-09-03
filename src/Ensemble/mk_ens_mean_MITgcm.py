@@ -199,8 +199,8 @@ with Pool(processes=args.nproc) as pool:
         for j, dataset in enumerate(args.datasets):
 
             output_filenames = []
-            for stat in ['mean', 'std']:
-                _filenames = dlh.genMITgcmFilenames("%s_%s" % (stat, dataset), dt + ref_msm.dumpfreq, ref_msm)
+            for stat, prefix in dict(mean="", std="std_").items():
+                _filenames = dlh.genMITgcmFilenames("%s%s" % (prefix, dataset), dt + avg_hrs, ref_msm)
                 output_filenames.extend(_filenames)
             
 

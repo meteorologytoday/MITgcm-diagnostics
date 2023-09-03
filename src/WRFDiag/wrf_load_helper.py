@@ -122,6 +122,7 @@ def loadWRFDataFromDir(input_dir, prefix="wrfout_d01_", time_rng=None, extend_ti
   
 
     if 'time' in test_ds:
+        print(fnames)
         ds = xr.open_mfdataset(fnames, decode_times=True, engine=engine, concat_dim=["time"], combine='nested')
  
     else:
