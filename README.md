@@ -4,7 +4,9 @@
 
 # SKRIPS naming rule
 
-Example: c01b03s01e05
+A `run` comes with a `run_id`. For example: c01b03s01e05 is a `run_id`.
+
+It has four components listed below
 
 - c : Numbering of the case. A fixed set of spatial grids. This is useful because
       different spatial grids requires a different compiled SKRIPS program).
